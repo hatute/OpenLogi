@@ -7,29 +7,41 @@ fn dock_swipe_encodes_both_directions_and_balanced_phases() {
         (Direction::Previous, -1.0_f64, -9999.0_f64),
         (Direction::Next, 1.0_f64, 9999.0_f64),
     ] {
-        let events = swipe_events(direction).expect("CGEvent allocation");
-        for (event, phase) in events.iter().zip([1, 4]) {
-            assert_eq!(CGEvent::r#type(Some(event)), CGEventType(30));
-            for (field, expected) in [(55, 30), (110, 23), (123, 1), (132, phase)] {
-                assert_eq!(
-                    CGEvent::integer_value_field(Some(event), CGEventField(field)),
-                    expected
-                );
-            }
+        let event = swipe_event(direction).expect("CGEvent allocation");
+        assert_ne!(CGEvent::r#type(Some(&event)), CGEventType(30));
+        for (field, expected) in [(55, 30), (110, 23), (123, 1), (132, 1)] {
             assert_eq!(
-                CGEvent::double_value_field(Some(event), CGEventField(124)).to_bits(),
-                progress.to_bits()
-            );
-            assert_eq!(
-                CGEvent::double_value_field(Some(event), CGEventField(129)).to_bits(),
-                velocity.to_bits()
-            );
-            assert_eq!(
-                CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUserData),
-                crate::inject::SYNTHETIC_EVENT_USER_DATA
+                CGEvent::integer_value_field(Some(&event), CGEventField(field)),
+                expected
             );
         }
+        assert_eq!(
+            CGEvent::double_value_field(Some(&event), CGEventField(124)).to_bits(),
+            progress.to_bits()
+        );
+        assert_eq!(
+            CGEvent::double_value_field(Some(&event), CGEventField(129)).to_bits(),
+            velocity.to_bits()
+        );
+        assert_eq!(
+            CGEvent::integer_value_field(Some(&event), CGEventField::EventSourceUserData),
+            crate::inject::SYNTHETIC_EVENT_USER_DATA
+        );
     }
+}
+
+#[test]
+fn dock_swipe_uses_one_event_for_both_phases() {
+    let event = swipe_event(Direction::Next).expect("CGEvent allocation");
+    assert_eq!(
+        CGEvent::integer_value_field(Some(&event), CGEventField(132)),
+        1
+    );
+    CGEvent::set_integer_value_field(Some(&event), CGEventField(132), 4);
+    assert_eq!(
+        CGEvent::integer_value_field(Some(&event), CGEventField(132)),
+        4
+    );
 }
 
 /// Opt-in hardware test. Run in a logged-in macOS session with Accessibility
