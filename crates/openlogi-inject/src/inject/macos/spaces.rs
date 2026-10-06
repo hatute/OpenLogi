@@ -18,7 +18,7 @@ use objc2_core_foundation::{
     CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFUUID,
 };
 use objc2_core_graphics::{
-    CGError, CGEvent, CGEventField, CGEventTapLocation, CGEventType, CGGetDisplaysWithPoint,
+    CGError, CGEvent, CGEventField, CGEventTapLocation, CGGetDisplaysWithPoint,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol};
 
@@ -161,13 +161,15 @@ impl Backend for Native {
     }
 
     fn post(&mut self, direction: Direction, gate: PostGate) -> Result<(), Failure> {
-        let events = swipe_events(direction).ok_or(Failure::PostFailed)?;
+        let event = swipe_event(direction).ok_or(Failure::PostFailed)?;
         if cursor_display() != Some(self.display) {
             return Err(Failure::ContextChanged);
         }
+        self.started = Instant::now();
         gate.commit(|| {
-            for event in &events {
-                CGEvent::post(CGEventTapLocation::SessionEventTap, Some(event));
+            for phase in [1, 4] {
+                CGEvent::set_integer_value_field(Some(&event), CGEventField(132), phase);
+                CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&event));
             }
         })
     }
@@ -182,29 +184,24 @@ impl Backend for Native {
     }
 }
 
-fn swipe_events(direction: Direction) -> Option<[CFRetained<CGEvent>; 2]> {
-    let make = |phase| {
-        let event = CGEvent::new(None)?;
-        // Establish the private DockControl type before setting its fields,
-        // as required by CGEventSetIntegerValueField's API contract. This is
-        // type 30 (also private field 55), not the generic Gesture type 29.
-        CGEvent::set_type(Some(&event), CGEventType(30));
-        // DockSwipe HID kind, horizontal motion, and balanced gesture phases.
-        for (field, value) in [(110, 23), (123, 1), (132, phase)] {
-            CGEvent::set_integer_value_field(Some(&event), CGEventField(field), value);
-        }
-        CGEvent::set_integer_value_field(
-            Some(&event),
-            CGEventField::EventSourceUserData,
-            super::super::SYNTHETIC_EVENT_USER_DATA,
-        );
-        CGEvent::set_double_value_field(Some(&event), CGEventField(124), direction.sign());
-        CGEvent::set_double_value_field(Some(&event), CGEventField(129), direction.sign() * 9999.0);
-        Some(event)
-    };
-    // Prepare both phases before posting either: allocation failure cannot
-    // leave an unterminated gesture. Send exactly one adjacent-Space swipe.
-    Some([make(1)?, make(4)?])
+fn swipe_event(direction: Direction) -> Option<CFRetained<CGEvent>> {
+    let event = CGEvent::new(None)?;
+    // Use the private DockControl event field shape from yabai's known-good
+    // implementation instead of forcing a public event type value.
+    for (field, value) in [(55, 30), (110, 23), (123, 1)] {
+        CGEvent::set_integer_value_field(Some(&event), CGEventField(field), value);
+    }
+    CGEvent::set_integer_value_field(
+        Some(&event),
+        CGEventField::EventSourceUserData,
+        super::super::SYNTHETIC_EVENT_USER_DATA,
+    );
+    CGEvent::set_double_value_field(Some(&event), CGEventField(124), direction.sign());
+    CGEvent::set_double_value_field(Some(&event), CGEventField(129), direction.sign() * 9999.0);
+    // Initialize to the first phase before posting. The second phase is posted
+    // by mutating this same event, matching DockSwipe consumers' expectations.
+    CGEvent::set_integer_value_field(Some(&event), CGEventField(132), 1);
+    Some(event)
 }
 
 type Dictionary = CFDictionary<CFString, CFType>;
